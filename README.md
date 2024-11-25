@@ -2,6 +2,62 @@
 Demo : https://thriving-torte-197d45.netlify.app/
 
 
+
+public class DossierKpiStatusSpecifications {
+
+    public static Specification<DossierKpiStatus> calculateElapsedTime() {
+        return (root, query, criteriaBuilder) -> {
+            // Subquery for MAX exit_date (or CURRENT_TIMESTAMP if null)
+            Subquery<LocalDateTime> maxExitDate = query.subquery(LocalDateTime.class);
+            Root<DossierKpiStatus> maxRoot = maxExitDate.from(DossierKpiStatus.class);
+            maxExitDate.select(
+                criteriaBuilder.coalesce(maxRoot.get("exitDate"), criteriaBuilder.currentTimestamp())
+            ).where(criteriaBuilder.equal(maxRoot.get("uuid"), root.get("uuid")));
+
+            // Subquery for MIN entry_date
+            Subquery<LocalDateTime> minEntryDate = query.subquery(LocalDateTime.class);
+            Root<DossierKpiStatus> minRoot = minEntryDate.from(DossierKpiStatus.class);
+            minEntryDate.select(
+                minRoot.get("entryDate")
+            ).where(criteriaBuilder.equal(minRoot.get("uuid"), root.get("uuid")));
+
+            // Main query: calculate elapsed time and average it
+            query.multiselect(
+                root.get("stageCode").alias("stageCode"),
+                criteriaBuilder.selectCase()
+                    .when(criteriaBuilder.equal(root.get("dossierCodeStatus"), "ACCD_RIDN"), "Retour à la charge")
+                    .otherwise(root.get("stageDesignation")).alias("designation"),
+                criteriaBuilder.avg(
+                    criteriaBuilder.function(
+                        "TIMESTAMPDIFF", Long.class, // Database-dependent; adjust for portability
+                        criteriaBuilder.literal("SECOND"),
+                        minEntryDate.getSelection(),
+                        maxExitDate.getSelection()
+                    )
+                ).alias("averageElapsedTime")
+            );
+
+            // Group by stageCode and designation
+            query.groupBy(
+                root.get("stageCode"),
+                criteriaBuilder.selectCase()
+                    .when(criteriaBuilder.equal(root.get("dossierCodeStatus"), "ACCD_RIDN"), "Retour à la charge")
+                    .otherwise(root.get("stageDesignation"))
+            );
+
+            query.orderBy(criteriaBuilder.asc(root.get("stageCode")));
+
+            return null; // Specifications require null here to build a query
+        };
+    }
+}
+
+
+
+
+
+
+
 public static Specification<Task> calculateAverageElapsedTimeWithoutDirectJoin() {
     return (Root<Task> root, CriteriaQuery<?> query, CriteriaBuilder cb) -> {
         // Create a subquery or join with a manual condition for RefStatus
