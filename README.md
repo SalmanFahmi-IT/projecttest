@@ -2,6 +2,69 @@
 Demo : https://thriving-torte-197d45.netlify.app/
 
 
+@Repository
+public class DossierKpiStatusViewRepositoryCustomImpl implements DossierKpiStatusViewRepositoryCustom {
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    @Override
+    public List<DossierStatusProjection> findAverageTimeByStage() {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<Tuple> query = cb.createTupleQuery();
+        Root<DossierStatusKpi> root = query.from(DossierStatusKpi.class);
+
+        // Define case statement for 'designation'
+        Expression<String> designation = cb.selectCase()
+            .when(cb.equal(root.get("dossierCodeStatus"), "ACCD_RIDN"), "Retour à la charge")
+            .otherwise(root.get("stage"));
+
+        // Aggregate functions for MIN(entry_date) and MAX(exit_date)
+        Expression<java.util.Date> maxExitDate = cb.greatest(root.get("exitDate"));
+        Expression<java.util.Date> minEntryDate = cb.least(root.get("entryDate"));
+
+        // Calculate elapsed time using MAX(exit_date) - MIN(entry_date)
+        Expression<Long> elapsedTime = cb.diff(
+            cb.function("UNIX_TIMESTAMP", Long.class, cb.coalesce(maxExitDate, cb.currentTimestamp())),
+            cb.function("UNIX_TIMESTAMP", Long.class, minEntryDate)
+        );
+
+        // Average elapsed time
+        Expression<Double> averageElapsedTime = cb.avg(elapsedTime);
+
+        // Include MIN(entry_date) and MAX(exit_date) directly in query
+        query.multiselect(
+                root.get("stageCode").alias("code"),
+                designation.alias("designation"),
+                averageElapsedTime.alias("averageTime"),
+                minEntryDate.alias("minEntryDate"),
+                maxExitDate.alias("maxExitDate")
+            )
+            .groupBy(root.get("stageCode"), designation)
+            .orderBy(cb.asc(root.get("stageCode")));
+
+        // Execute query and map results to DTO or Projection
+        List<Tuple> result = entityManager.createQuery(query).getResultList();
+
+        return result.stream()
+            .map(tuple -> new DossierStatusProjectionImpl(
+                tuple.get("code", String.class),
+                tuple.get("designation", String.class),
+                tuple.get("averageTime", Double.class),
+                tuple.get("minEntryDate", java.util.Date.class),
+                tuple.get("maxExitDate", java.util.Date.class)
+            ))
+            .toList();
+    }
+}
+
+
+
+
+
+
+...............
+
 
 public class DossierKpiStatusSpecifications {
 
