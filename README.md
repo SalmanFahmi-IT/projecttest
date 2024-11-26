@@ -2,6 +2,59 @@
 Demo : https://thriving-torte-197d45.netlify.app/
 
 
+import javax.persistence.criteria.CriteriaBuilder;
+import javax.persistence.criteria.CriteriaQuery;
+import javax.persistence.criteria.Expression;
+import javax.persistence.criteria.Predicate;
+import javax.persistence.criteria.Root;
+import javax.persistence.criteria.Subquery;
+import java.util.Date;
+import java.util.List;
+
+public class DossierStatusRepository {
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    public List<DossierStatusDTO> findAverageTimeByStage() {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<DossierStatusDTO> cq = cb.createQuery(DossierStatusDTO.class);
+
+        Root<DossierKpiStatus> root = cq.from(DossierKpiStatus.class);
+
+        // Subquery to get max exit_date for each uuid
+        Subquery<Date> subquery = cq.subquery(Date.class);
+        Root<DossierKpiStatus> subRoot = subquery.from(DossierKpiStatus.class);
+        subquery.select(cb.greatest(subRoot.get("exitDate")));
+        subquery.where(cb.equal(subRoot.get("uuid"), root.get("uuid")));
+
+        // Main query
+        Expression<String> designation = cb.selectCase()
+            .when(cb.equal(root.get("dossierCodeStatus"), "ACCD_RIDN"), "Retour à la charge")
+            .otherwise(root.get("stage"));
+
+        Expression<Date> exitDate = cb.coalesce(subquery, cb.currentDate());
+        Expression<Long> averageElapsedTime = cb.diff(exitDate, root.get("entryDate")).as(Long.class);
+
+        cq.multiselect(
+            root.get("stageCode"),
+            designation,
+            cb.avg(averageElapsedTime).as(Double.class)
+        ).groupBy(
+            root.get("stageCode"),
+            designation
+        );
+
+        TypedQuery<DossierStatusDTO> query = entityManager.createQuery(cq);
+        return query.getResultList();
+    }
+}
+
+
+
+
+llllllllllllll
+
 @Repository
 public class DossierKpiStatusViewRepositoryCustomImpl implements DossierKpiStatusViewRepositoryCustom {
 
