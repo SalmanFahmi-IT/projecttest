@@ -11,6 +11,79 @@ public class DossierKpiStatusViewRepositoryCustomImpl implements DossierKpiStatu
     @Override
     public List<DossierStatusProjection> findAverageTimeByStage() {
         CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+
+        // Inner query: calculate MAX, MIN, elapsed time, and stage designation
+        CriteriaQuery<Tuple> innerQuery = cb.createTupleQuery();
+        Root<DossierStatusKpi> root = innerQuery.from(DossierStatusKpi.class);
+
+        // Calculate MAX(exit_date) with fallback to CURRENT_DATE
+        Expression<Date> maxExitDate = cb.coalesce(root.get("exitDate"), cb.currentDate());
+        Expression<Long> maxExitDateEpoch = cb.function("EXTRACT", Long.class, cb.literal("EPOCH"), maxExitDate);
+
+        // Calculate MIN(entry_date)
+        Expression<Long> minEntryDateEpoch = cb.function("EXTRACT", Long.class, cb.literal("EPOCH"), root.get("entryDate"));
+
+        // Calculate elapsed time: MAX(exit_date) - MIN(entry_date)
+        Expression<Long> elapsedTime = cb.diff(maxExitDateEpoch, minEntryDateEpoch);
+
+        // Case for 'designation'
+        Expression<String> designation = cb.selectCase()
+            .when(cb.equal(root.get("dossierCodeStatus"), "ACCD_RIDN"), "Retour à la charge")
+            .otherwise(root.get("stage"));
+
+        // Group by criteria
+        innerQuery.multiselect(
+                root.get("stageCode").alias("stageCode"),
+                designation.alias("designation"),
+                elapsedTime.alias("elapsedTime")
+        ).groupBy(root.get("stageCode"), designation);
+
+        // Outer query: calculate average elapsed time
+        CriteriaQuery<Tuple> outerQuery = cb.createTupleQuery();
+        Subquery<Tuple> subquery = outerQuery.subquery(Tuple.class);
+        Root<Tuple> subRoot = subquery.correlate(innerQuery);
+
+        // Calculate average elapsed time
+        Expression<Double> avgElapsedTime = cb.avg(subRoot.get("elapsedTime"));
+        Expression<Double> roundedAvgTime = cb.function("ROUND", Double.class, avgElapsedTime, cb.literal(0));
+
+        // Final selection
+        outerQuery.multiselect(
+                subRoot.get("stageCode").alias("code"),
+                subRoot.get("designation").alias("designation"),
+                roundedAvgTime.alias("time")
+        ).groupBy(subRoot.get("stageCode"), subRoot.get("designation"))
+         .orderBy(cb.asc(subRoot.get("stageCode")));
+
+        // Execute query and return results
+        List<Tuple> result = entityManager.createQuery(outerQuery).getResultList();
+
+        return result.stream()
+            .map(tuple -> new DossierStatusProjectionImpl(
+                tuple.get("code", String.class),
+                tuple.get("designation", String.class),
+                tuple.get("time", Double.class)
+            ))
+            .toList();
+    }
+}
+
+
+
+
+
+
+
+................
+@Repository
+public class DossierKpiStatusViewRepositoryCustomImpl implements DossierKpiStatusViewRepositoryCustom {
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    @Override
+    public List<DossierStatusProjection> findAverageTimeByStage() {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
         CriteriaQuery<Tuple> query = cb.createTupleQuery();
         Root<DossierStatusKpi> root = query.from(DossierStatusKpi.class);
 
